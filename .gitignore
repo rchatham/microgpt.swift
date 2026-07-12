@@ -11,3 +11,4 @@ DerivedData/
 /test-model.json
 /models/
 *.gguf
+/Vendor/LocalLLMClient/

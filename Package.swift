@@ -5,11 +5,27 @@ import PackageDescription
 
 let package = Package(
     name: "microgpt.swift",
+    platforms: [.macOS(.v14)],
+    products: [
+        .executable(name: "microgpt.swift", targets: ["microgpt.swift"]),
+        .executable(name: "translategemma-swift", targets: ["translategemma-swift"]),
+    ],
+    dependencies: [
+        .package(path: "Vendor/LocalLLMClient"),
+    ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .executableTarget(
             name: "microgpt.swift"
+        ),
+        .executableTarget(
+            name: "translategemma-swift",
+            dependencies: [
+                .product(name: "LocalLLMClient", package: "LocalLLMClient"),
+                .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
+            ],
+            swiftSettings: [
+                .interoperabilityMode(.Cxx)
+            ]
         ),
     ]
 )

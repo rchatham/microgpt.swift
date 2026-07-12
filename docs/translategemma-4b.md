@@ -42,6 +42,35 @@ This downloads to:
 models/translategemma-4b-it-Q4_K_M.gguf
 ```
 
+## Run weights directly from Swift
+
+This is the repo's main goal: load local GGUF model weights from a Swift executable using `LocalLLMClient`/llama.cpp.
+
+Set up the local Swift llama.cpp wrapper dependency, then build the Swift runner:
+
+```bash
+./scripts/setup-localllmclient.sh
+swift build -c release --product translategemma-swift
+```
+
+`LocalLLMClient` currently depends on llama.cpp targets with unsafe build flags. SwiftPM does not allow those through a normal remote package dependency, so this repo uses a local path dependency under `Vendor/LocalLLMClient` created by the setup script.
+
+Run with a local GGUF file:
+
+```bash
+MODEL=models/translategemma-4b-it-Q4_K_M.gguf \
+SOURCE=English TARGET=Spanish \
+.build/release/translategemma-swift "The weather is beautiful today."
+```
+
+Pipe input via stdin:
+
+```bash
+echo "Good morning, how are you?" | TARGET=Japanese .build/release/translategemma-swift
+```
+
+The Ollama and shell scripts below are only smoke-test/prototyping helpers; they are not the intended final architecture.
+
 ## Run with Ollama if you already have the model
 
 If `ollama list` shows `translategemma:latest`, no GGUF download is needed:
