@@ -42,7 +42,27 @@ This downloads to:
 models/translategemma-4b-it-Q4_K_M.gguf
 ```
 
-## Run a translation smoke test
+## Run with Ollama if you already have the model
+
+If `ollama list` shows `translategemma:latest`, no GGUF download is needed:
+
+```bash
+./scripts/run-translategemma-4b-ollama.sh "The weather is beautiful today."
+```
+
+Target a different language:
+
+```bash
+TARGET=Japanese ./scripts/run-translategemma-4b-ollama.sh "Good morning, how are you?"
+```
+
+Use a different Ollama model name:
+
+```bash
+MODEL=translategemma:latest SOURCE=English TARGET=French ./scripts/run-translategemma-4b-ollama.sh "I would like a coffee."
+```
+
+## Run a GGUF translation smoke test
 
 ```bash
 ./scripts/run-translategemma-4b.sh "Translate into Spanish: The weather is beautiful today."
