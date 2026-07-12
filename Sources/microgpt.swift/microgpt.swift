@@ -4,8 +4,26 @@ import Foundation
 /// Run with: `swift run`
 @main
 struct MicroGPT {
-    static func main() throws {
-        var rng = SeededRandomNumberGenerator(seed: 42)
+    static func main() {
+        do {
+            try run()
+        } catch let error as MicroGPTError {
+            fputs("error: \(error.description)\n", stderr)
+            exit(1)
+        } catch {
+            fputs("error: \(error.localizedDescription)\n", stderr)
+            exit(1)
+        }
+    }
+
+    static func run() throws {
+        let env = ProcessInfo.processInfo.environment
+        if CommandLine.arguments.contains("--help") || boolEnv(env["HELP"], default: false) {
+            printHelp()
+            return
+        }
+        let seed = UInt64(env["SEED"] ?? "42") ?? 42
+        var rng = SeededRandomNumberGenerator(seed: seed)
 
         if !FileManager.default.fileExists(atPath: "input.txt") {
             let namesURL = URL(string: "https://raw.githubusercontent.com/karpathy/makemore/988aa59/names.txt")!
@@ -13,9 +31,11 @@ struct MicroGPT {
             try data.write(to: URL(fileURLWithPath: "input.txt"))
         }
 
-        let input = try String(contentsOfFile: "input.txt", encoding: .utf8)
+        let inputPath = env["INPUT"] ?? "input.txt"
+        let input = try String(contentsOfFile: inputPath, encoding: .utf8)
         var docs = input.split(whereSeparator: \ .isNewline).map(String.init).filter { !$0.isEmpty }
         docs.shuffle(using: &rng)
+        let knownNames = Set(docs.map { $0.lowercased() })
         print("num docs: \(docs.count)")
 
         let uchars = Array(Set(docs.joined())).sorted()
@@ -24,11 +44,12 @@ struct MicroGPT {
         let vocabSize = uchars.count + 1
         print("vocab size: \(vocabSize)")
 
-        let nLayer = 1
-        let nEmbd = 16
-        let blockSize = 16
-        let nHead = 4
+        let nLayer = Int(env["N_LAYER"] ?? "1") ?? 1
+        let nEmbd = Int(env["N_EMBD"] ?? "16") ?? 16
+        let blockSize = Int(env["BLOCK_SIZE"] ?? "16") ?? 16
+        let nHead = Int(env["N_HEAD"] ?? "4") ?? 4
         let headDim = nEmbd / nHead
+        print("config: layers=\(nLayer) embd=\(nEmbd) heads=\(nHead) block=\(blockSize) seed=\(seed)")
 
         func matrix(_ nout: Int, _ nin: Int, std: Double = 0.08) -> [[Value]] {
             (0..<nout).map { _ in (0..<nin).map { _ in Value(rng.gaussian(mean: 0, std: std)) } }
@@ -49,7 +70,23 @@ struct MicroGPT {
             stateDict["layer\(i).mlp_fc2"] = matrix(nEmbd, 4 * nEmbd)
         }
 
-        let params = stateDict.values.flatMap { matrix in matrix.flatMap { $0 } }
+        if let checkpointPath = env["LOAD_CHECKPOINT"] {
+            let checkpoint = try JSONDecoder().decode(Checkpoint.self, from: Data(contentsOf: URL(fileURLWithPath: checkpointPath)))
+            guard checkpoint.uchars == uchars.map(String.init),
+                  checkpoint.nLayer == nLayer,
+                  checkpoint.nEmbd == nEmbd,
+                  checkpoint.blockSize == blockSize,
+                  checkpoint.nHead == nHead else {
+                throw MicroGPTError.incompatibleCheckpoint
+            }
+            for (key, savedMatrix) in checkpoint.stateDict {
+                stateDict[key] = savedMatrix.map { row in row.map { Value($0) } }
+            }
+            print("loaded checkpoint: \(checkpointPath)")
+        }
+
+        let paramKeys = stateDict.keys.sorted()
+        let params = paramKeys.flatMap { key in stateDict[key]!.flatMap { $0 } }
         print("num params: \(params.count)")
 
         func linear(_ x: [Value], _ w: [[Value]]) -> [Value] {
@@ -114,14 +151,14 @@ struct MicroGPT {
             return linear(x, stateDict["lm_head"]!)
         }
 
-        let learningRate = 0.01
-        let beta1 = 0.85
-        let beta2 = 0.99
+        let learningRate = Double(env["LEARNING_RATE"] ?? "0.01") ?? 0.01
+        let beta1 = Double(env["BETA1"] ?? "0.85") ?? 0.85
+        let beta2 = Double(env["BETA2"] ?? "0.99") ?? 0.99
         let epsAdam = 1e-8
         var m = Array(repeating: 0.0, count: params.count)
         var v = Array(repeating: 0.0, count: params.count)
 
-        let numSteps = Int(ProcessInfo.processInfo.environment["NUM_STEPS"] ?? "1000") ?? 1000
+        let numSteps = Int(env["NUM_STEPS"] ?? "1000") ?? 1000
         for step in 0..<numSteps {
             let doc = docs[step % docs.count]
             let tokens = [bos] + doc.compactMap { charToID[$0] } + [bos]
@@ -154,21 +191,124 @@ struct MicroGPT {
             fflush(stdout)
         }
 
-        let temperature = 0.5
+        if let checkpointPath = env["SAVE_CHECKPOINT"] {
+            let savedState = Dictionary(uniqueKeysWithValues: stateDict.map { key, matrix in
+                (key, matrix.map { row in row.map(\.data) })
+            })
+            let checkpoint = Checkpoint(
+                uchars: uchars.map(String.init),
+                nLayer: nLayer,
+                nEmbd: nEmbd,
+                blockSize: blockSize,
+                nHead: nHead,
+                stateDict: savedState
+            )
+            let data = try JSONEncoder().encode(checkpoint)
+            try data.write(to: URL(fileURLWithPath: checkpointPath))
+            print("\nsaved checkpoint: \(checkpointPath)")
+        }
+
+        let temperature = Double(env["TEMPERATURE"] ?? "0.5") ?? 0.5
+        let topK = Int(env["TOP_K"] ?? "0") ?? 0
+        let topP = Double(env["TOP_P"] ?? "1.0") ?? 1.0
+        let prefix = (env["PREFIX"] ?? "").lowercased()
+        let startsWith = (env["STARTS_WITH"] ?? "").lowercased()
+        let minLength = Int(env["MIN_LENGTH"] ?? "0") ?? 0
+        let maxLength = Int(env["MAX_LENGTH"] ?? String(blockSize)) ?? blockSize
+        let maxRepeat = Int(env["MAX_REPEAT"] ?? "2") ?? 2
+        let uniqueOnly = boolEnv(env["UNIQUE"], default: true)
+        let excludeKnown = boolEnv(env["EXCLUDE_KNOWN"], default: false)
+        let requireVowel = boolEnv(env["REQUIRE_VOWEL"], default: true)
+        let bannedPatterns = (env["BANNED_PATTERNS"] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }.filter { !$0.isEmpty }
+        let numSamples = Int(env["SAMPLES"] ?? "20") ?? 20
+
+        guard prefix.count < blockSize else { throw MicroGPTError.prefixTooLong }
+        guard prefix.allSatisfy({ charToID[$0] != nil }) else { throw MicroGPTError.unknownPrefixCharacter(prefix) }
+        guard startsWith.isEmpty || startsWith.count == 1 else { throw MicroGPTError.startsWithMustBeOneCharacter }
+        guard startsWith.allSatisfy({ charToID[$0] != nil }) else { throw MicroGPTError.unknownStartsWithCharacter(startsWith) }
+        guard minLength >= 0, maxLength >= minLength, maxLength <= blockSize else { throw MicroGPTError.invalidLengthRange }
+
+        print("sampling: temp=\(temperature) topK=\(topK) topP=\(topP) prefix='\(prefix)' startsWith='\(startsWith)' length=\(minLength)...\(maxLength) unique=\(uniqueOnly) excludeKnown=\(excludeKnown)")
         print("\n--- inference (new, hallucinated names) ---")
-        for sampleIdx in 0..<20 {
+        var printedSamples = 0
+        var attempts = 0
+        var generatedNames = Set<String>()
+        let maxAttempts = max(numSamples * 100, numSamples)
+        while printedSamples < numSamples && attempts < maxAttempts {
+            attempts += 1
             var keys = Array(repeating: [[Value]](), count: nLayer)
             var values = Array(repeating: [[Value]](), count: nLayer)
             var tokenID = bos
             var sample: [Character] = []
-            for posID in 0..<blockSize {
+            var posID = 0
+
+            for character in prefix where posID < blockSize {
+                _ = gpt(tokenID: tokenID, posID: posID, keys: &keys, values: &values)
+                tokenID = charToID[character]!
+                sample.append(character)
+                posID += 1
+            }
+
+            while posID < blockSize {
                 let logits = gpt(tokenID: tokenID, posID: posID, keys: &keys, values: &values)
                 let probs = softmax(logits.map { $0 / temperature })
-                tokenID = rng.weightedChoice(weights: probs.map(\.data))
+                tokenID = rng.weightedChoice(weights: filteredWeights(probs.map(\.data), topK: topK, topP: topP))
                 if tokenID == bos { break }
                 sample.append(uchars[tokenID])
+                posID += 1
+                if sample.count >= maxLength { break }
             }
-            print(String(format: "sample %2d: %@", sampleIdx + 1, String(sample)))
+
+            let generated = String(sample)
+            if generated.count < minLength || generated.count > maxLength { continue }
+            if hasTooManyRepeats(generated, maxRepeat: maxRepeat) { continue }
+            if requireVowel && !containsVowel(generated) { continue }
+            if bannedPatterns.contains(where: { generated.contains($0) }) { continue }
+            if uniqueOnly && generatedNames.contains(generated) { continue }
+            if excludeKnown && knownNames.contains(generated) { continue }
+            if prefix.isEmpty && !startsWith.isEmpty && !generated.hasPrefix(startsWith) { continue }
+            generatedNames.insert(generated)
+            printedSamples += 1
+            print(String(format: "sample %2d: %@", printedSamples, generated))
+        }
+
+        if printedSamples < numSamples {
+            print("warning: only generated \(printedSamples) matching samples after \(attempts) attempts")
+        }
+    }
+}
+
+struct Checkpoint: Codable {
+    let uchars: [String]
+    let nLayer: Int
+    let nEmbd: Int
+    let blockSize: Int
+    let nHead: Int
+    let stateDict: [String: [[Double]]]
+}
+
+enum MicroGPTError: Error, CustomStringConvertible {
+    case incompatibleCheckpoint
+    case prefixTooLong
+    case unknownPrefixCharacter(String)
+    case startsWithMustBeOneCharacter
+    case unknownStartsWithCharacter(String)
+    case invalidLengthRange
+
+    var description: String {
+        switch self {
+        case .incompatibleCheckpoint:
+            "checkpoint does not match dataset/model config; pass the same N_LAYER, N_EMBD, N_HEAD, and BLOCK_SIZE used for training"
+        case .prefixTooLong:
+            "PREFIX must be shorter than BLOCK_SIZE"
+        case .unknownPrefixCharacter(let prefix):
+            "PREFIX contains characters not present in the dataset vocabulary: \(prefix)"
+        case .startsWithMustBeOneCharacter:
+            "STARTS_WITH must be empty or exactly one character"
+        case .unknownStartsWithCharacter(let value):
+            "STARTS_WITH character is not present in the dataset vocabulary: \(value)"
+        case .invalidLengthRange:
+            "invalid MIN_LENGTH/MAX_LENGTH; require 0 <= MIN_LENGTH <= MAX_LENGTH <= BLOCK_SIZE"
         }
     }
 }
@@ -249,6 +389,90 @@ func * (lhs: Double, rhs: Value) -> Value { Value(lhs) * rhs }
 func / (lhs: Value, rhs: Value) -> Value { lhs * rhs.pow(-1) }
 func / (lhs: Value, rhs: Double) -> Value { lhs / Value(rhs) }
 func / (lhs: Double, rhs: Value) -> Value { Value(lhs) / rhs }
+
+func filteredWeights(_ weights: [Double], topK: Int, topP: Double) -> [Double] {
+    let sorted = weights.enumerated().sorted { $0.element > $1.element }
+    var keep = Set(sorted.map(\.offset))
+
+    if topK > 0, topK < weights.count {
+        keep = Set(sorted.prefix(topK).map(\.offset))
+    }
+
+    if topP > 0, topP < 1 {
+        var cumulative = 0.0
+        var nucleus = Set<Int>()
+        for item in sorted where keep.contains(item.offset) {
+            nucleus.insert(item.offset)
+            cumulative += item.element
+            if cumulative >= topP { break }
+        }
+        keep = nucleus
+    }
+
+    return weights.enumerated().map { keep.contains($0.offset) ? $0.element : 0 }
+}
+
+func hasTooManyRepeats(_ text: String, maxRepeat: Int) -> Bool {
+    guard maxRepeat > 0 else { return false }
+    var previous: Character?
+    var count = 0
+    for character in text {
+        if character == previous {
+            count += 1
+            if count > maxRepeat { return true }
+        } else {
+            previous = character
+            count = 1
+        }
+    }
+    return false
+}
+
+func containsVowel(_ text: String) -> Bool {
+    text.contains { "aeiouy".contains($0) }
+}
+
+func boolEnv(_ value: String?, default defaultValue: Bool) -> Bool {
+    guard let value else { return defaultValue }
+    switch value.lowercased() {
+    case "1", "true", "yes", "on": return true
+    case "0", "false", "no", "off": return false
+    default: return defaultValue
+    }
+}
+
+func printHelp() {
+    print("""
+    microgpt.swift - tiny dependency-free character GPT trainer/generator
+
+    Training:
+      NUM_STEPS=10000 SAVE_CHECKPOINT=model.json .build/release/microgpt.swift
+
+    Inference:
+      NUM_STEPS=0 LOAD_CHECKPOINT=model.json SAMPLES=50 .build/release/microgpt.swift
+
+    Model config, must match checkpoint when loading:
+      N_LAYER=1 N_EMBD=32 N_HEAD=4 BLOCK_SIZE=16
+
+    Sampling controls:
+      TEMPERATURE=0.65 TOP_K=8 TOP_P=0.9 SEED=42 SAMPLES=20
+      PREFIX=sha              Continue from a prefix; best for rare starts like z/q/x
+      STARTS_WITH=m           Rejection-filter by first letter
+      MIN_LENGTH=4 MAX_LENGTH=8 MAX_REPEAT=2
+      UNIQUE=true             Suppress duplicate outputs
+      EXCLUDE_KNOWN=false     Suppress names present in the training data
+      REQUIRE_VOWEL=true      Reject names without a/e/i/o/u/y
+      BANNED_PATTERNS=aaa,zzz Reject comma-separated substrings
+
+    Data:
+      INPUT=input.txt          One training name/document per line
+
+    Good generation recipe:
+      SEED=11 N_EMBD=32 N_HEAD=4 NUM_STEPS=0 LOAD_CHECKPOINT=model-32-10000.json \\
+        TEMPERATURE=0.65 TOP_K=8 TOP_P=0.9 MIN_LENGTH=4 MAX_LENGTH=7 \\
+        UNIQUE=true EXCLUDE_KNOWN=true SAMPLES=50 .build/release/microgpt.swift
+    """)
+}
 
 struct SeededRandomNumberGenerator: RandomNumberGenerator {
     private var state: UInt64
