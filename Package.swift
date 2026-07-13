@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .executable(name: "microgpt.swift", targets: ["microgpt.swift"]),
         .executable(name: "translategemma-swift", targets: ["translategemma-swift"]),
+        .executable(name: "gguf-inspect", targets: ["gguf-inspect"]),
     ],
     dependencies: [
         .package(path: "Vendor/LocalLLMClient"),
@@ -26,6 +27,9 @@ let package = Package(
             swiftSettings: [
                 .interoperabilityMode(.Cxx)
             ]
+        ),
+        .executableTarget(
+            name: "gguf-inspect"
         ),
     ]
 )
