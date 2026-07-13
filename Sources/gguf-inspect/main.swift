@@ -2,6 +2,7 @@ import Foundation
 
 enum GGUFError: Error, CustomStringConvertible {
     case invalidUsage
+    case invalidValueCount(String)
     case failedToReadFile(String)
     case unexpectedEOF(offset: Int, needed: Int)
     case invalidMagic(String)
@@ -9,11 +10,16 @@ enum GGUFError: Error, CustomStringConvertible {
     case invalidUTF8
     case unknownValueType(UInt32)
     case unsupportedArrayElement(GGUFValueType)
+    case tensorNotFound(String)
+    case unsupportedTensorDecode(String)
+    case invalidTensorRange(String)
 
     var description: String {
         switch self {
         case .invalidUsage:
-            return "usage: gguf-inspect <model.gguf>"
+            return "usage: gguf-inspect <model.gguf> [--tensor <name>] [--values <count>]"
+        case .invalidValueCount(let value):
+            return "invalid --values count: \(value)"
         case .failedToReadFile(let path):
             return "failed to read file: \(path)"
         case .unexpectedEOF(let offset, let needed):
@@ -28,6 +34,12 @@ enum GGUFError: Error, CustomStringConvertible {
             return "unknown GGUF metadata value type: \(raw)"
         case .unsupportedArrayElement(let type):
             return "unsupported GGUF array element type: \(type)"
+        case .tensorNotFound(let name):
+            return "tensor not found: \(name)"
+        case .unsupportedTensorDecode(let type):
+            return "unsupported tensor decode for type: \(type)"
+        case .invalidTensorRange(let name):
+            return "tensor range is outside file data: \(name)"
         }
     }
 }
@@ -103,6 +115,44 @@ struct GGUFFile {
     let metadata: [String: GGUFMetadataValue]
     let tensors: [GGUFTensorInfo]
     let tensorDataStart: Int
+    let data: Data
+
+    func tensor(named name: String) -> GGUFTensorInfo? {
+        tensors.first { $0.name == name }
+    }
+
+    func bytes(for tensor: GGUFTensorInfo) throws -> Data {
+        guard let byteCount = GGMLType.byteCount(type: tensor.type, elementCount: tensor.elementCount) else {
+            throw GGUFError.unsupportedTensorDecode(tensor.typeName)
+        }
+        let start = tensorDataStart + Int(tensor.offset)
+        guard start >= 0, start <= data.count - byteCount else {
+            throw GGUFError.invalidTensorRange(tensor.name)
+        }
+        return data[start..<(start + byteCount)]
+    }
+
+    func decodedFloatPrefix(tensor: GGUFTensorInfo, count: Int) throws -> [Float] {
+        let raw = try bytes(for: tensor)
+        let limitedCount = min(count, Int(tensor.elementCount))
+        switch tensor.type {
+        case 0:
+            return raw.withUnsafeBytes { bytes in
+                (0..<limitedCount).map { index in
+                    Float(bitPattern: UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: index * 4, as: UInt32.self)))
+                }
+            }
+        case 1:
+            return raw.withUnsafeBytes { bytes in
+                (0..<limitedCount).map { index in
+                    let bits = UInt16(littleEndian: bytes.loadUnaligned(fromByteOffset: index * 2, as: UInt16.self))
+                    return Float(Float16(bitPattern: bits))
+                }
+            }
+        default:
+            throw GGUFError.unsupportedTensorDecode(tensor.typeName)
+        }
+    }
 }
 
 enum GGMLType {
@@ -139,6 +189,42 @@ enum GGMLType {
         case 30: "BF16"
         default: "UNKNOWN(\(raw))"
         }
+    }
+
+    static func byteCount(type raw: UInt32, elementCount: UInt64) -> Int? {
+        switch raw {
+        case 0: return checkedInt(elementCount, multipliedBy: 4)
+        case 1: return checkedInt(elementCount, multipliedBy: 2)
+        case 2: return blockByteCount(elementCount: elementCount, blockSize: 32, typeSize: 18)
+        case 3: return blockByteCount(elementCount: elementCount, blockSize: 32, typeSize: 20)
+        case 6: return blockByteCount(elementCount: elementCount, blockSize: 32, typeSize: 22)
+        case 7: return blockByteCount(elementCount: elementCount, blockSize: 32, typeSize: 24)
+        case 8: return blockByteCount(elementCount: elementCount, blockSize: 32, typeSize: 34)
+        case 9: return blockByteCount(elementCount: elementCount, blockSize: 32, typeSize: 36)
+        case 10: return blockByteCount(elementCount: elementCount, blockSize: 256, typeSize: 84)
+        case 11: return blockByteCount(elementCount: elementCount, blockSize: 256, typeSize: 110)
+        case 12: return blockByteCount(elementCount: elementCount, blockSize: 256, typeSize: 144)
+        case 13: return blockByteCount(elementCount: elementCount, blockSize: 256, typeSize: 176)
+        case 14: return blockByteCount(elementCount: elementCount, blockSize: 256, typeSize: 210)
+        case 15: return blockByteCount(elementCount: elementCount, blockSize: 256, typeSize: 292)
+        case 24: return checkedInt(elementCount, multipliedBy: 1)
+        case 25: return checkedInt(elementCount, multipliedBy: 2)
+        case 26: return checkedInt(elementCount, multipliedBy: 4)
+        case 27: return checkedInt(elementCount, multipliedBy: 8)
+        case 28: return checkedInt(elementCount, multipliedBy: 8)
+        case 30: return checkedInt(elementCount, multipliedBy: 2)
+        default: return nil
+        }
+    }
+
+    private static func blockByteCount(elementCount: UInt64, blockSize: UInt64, typeSize: UInt64) -> Int? {
+        let blocks = (elementCount + blockSize - 1) / blockSize
+        return checkedInt(blocks, multipliedBy: typeSize)
+    }
+
+    private static func checkedInt(_ value: UInt64, multipliedBy multiplier: UInt64) -> Int? {
+        guard value <= UInt64(Int.max) / multiplier else { return nil }
+        return Int(value * multiplier)
     }
 }
 
@@ -253,7 +339,8 @@ struct GGUFReader {
             tensorCount: tensorCount,
             metadata: metadata,
             tensors: tensors,
-            tensorDataStart: tensorDataStart
+            tensorDataStart: tensorDataStart,
+            data: data
         )
     }
 
@@ -330,15 +417,47 @@ private extension GGUFMetadataValue {
     }
 }
 
+struct InspectOptions {
+    let path: String
+    let tensorName: String?
+    let valueCount: Int
+}
+
 struct GGUFInspect {
     static func main() throws {
-        let arguments = Array(CommandLine.arguments.dropFirst())
-        guard arguments.count == 1 else {
+        let options = try parseOptions(Array(CommandLine.arguments.dropFirst()))
+        let file = try GGUFReader().read(path: options.path)
+        printSummary(file)
+        if let tensorName = options.tensorName {
+            try printTensor(file, name: tensorName, valueCount: options.valueCount)
+        }
+    }
+
+    private static func parseOptions(_ arguments: [String]) throws -> InspectOptions {
+        guard let path = arguments.first, !path.hasPrefix("--") else {
             throw GGUFError.invalidUsage
         }
-
-        let file = try GGUFReader().read(path: arguments[0])
-        printSummary(file)
+        var tensorName: String?
+        var valueCount = 16
+        var index = 1
+        while index < arguments.count {
+            switch arguments[index] {
+            case "--tensor":
+                guard index + 1 < arguments.count else { throw GGUFError.invalidUsage }
+                tensorName = arguments[index + 1]
+                index += 2
+            case "--values":
+                guard index + 1 < arguments.count else { throw GGUFError.invalidUsage }
+                guard let parsed = Int(arguments[index + 1]), parsed >= 0 else {
+                    throw GGUFError.invalidValueCount(arguments[index + 1])
+                }
+                valueCount = parsed
+                index += 2
+            default:
+                throw GGUFError.invalidUsage
+            }
+        }
+        return InspectOptions(path: path, tensorName: tensorName, valueCount: valueCount)
     }
 
     private static func printSummary(_ file: GGUFFile) {
@@ -380,6 +499,30 @@ struct GGUFInspect {
         }
         if file.tensors.count > 24 {
             print("  … \(file.tensors.count - 24) more")
+        }
+    }
+
+    private static func printTensor(_ file: GGUFFile, name: String, valueCount: Int) throws {
+        guard let tensor = file.tensor(named: name) else {
+            throw GGUFError.tensorNotFound(name)
+        }
+        let byteCount = try file.bytes(for: tensor).count
+        let dimensions = tensor.dimensions.map(String.init).joined(separator: " x ")
+        print("")
+        print("Tensor \(tensor.name)")
+        print("  shape: [\(dimensions)]")
+        print("  type: \(tensor.typeName)")
+        print("  elements: \(tensor.elementCount)")
+        print("  relative offset: \(tensor.offset)")
+        print("  byte count: \(byteCount)")
+        if valueCount > 0 {
+            if tensor.type == 0 || tensor.type == 1 {
+                let values = try file.decodedFloatPrefix(tensor: tensor, count: valueCount)
+                let rendered = values.map { String(format: "%.6g", Double($0)) }.joined(separator: ", ")
+                print("  first \(values.count) values: [\(rendered)]")
+            } else {
+                print("  first values: <\(tensor.typeName) decode not implemented; use --values 0 to suppress>")
+            }
         }
     }
 
