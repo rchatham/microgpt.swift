@@ -10,6 +10,7 @@ let package = Package(
         .executable(name: "microgpt.swift", targets: ["microgpt.swift"]),
         .executable(name: "translategemma-swift", targets: ["translategemma-swift"]),
         .executable(name: "gguf-inspect", targets: ["gguf-inspect"]),
+        .executable(name: "translategemma-native-tokenize", targets: ["translategemma-native-tokenize"]),
     ],
     dependencies: [
         .package(path: "Vendor/LocalLLMClient"),
@@ -30,6 +31,9 @@ let package = Package(
         ),
         .executableTarget(
             name: "gguf-inspect"
+        ),
+        .executableTarget(
+            name: "translategemma-native-tokenize"
         ),
     ]
 )
