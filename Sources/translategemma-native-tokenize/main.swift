@@ -235,13 +235,18 @@ struct GGUFMetadataReader {
 struct GreedySentencePieceTokenizer {
     let metadata: GGUFTokenizerMetadata
     let tokenToID: [String: Int]
+    let byteTokenIDs: [UInt8: Int]
     let maxTokenLength: Int
 
     init(metadata: GGUFTokenizerMetadata) throws {
         guard metadata.model == "llama" else { throw TokenizerError.unsupportedTokenizer(metadata.model) }
         self.metadata = metadata
-        self.tokenToID = metadata.tokens.enumerated().reduce(into: [:]) { result, item in
+        let tokenToID = metadata.tokens.enumerated().reduce(into: [:]) { result, item in
             result[item.element] = result[item.element] ?? item.offset
+        }
+        self.tokenToID = tokenToID
+        self.byteTokenIDs = (UInt8.min...UInt8.max).reduce(into: [:]) { result, byte in
+            result[byte] = tokenToID[String(format: "<0x%02X>", byte)]
         }
         self.maxTokenLength = metadata.tokens.map(\.count).max() ?? 0
     }
@@ -272,8 +277,9 @@ struct GreedySentencePieceTokenizer {
                 ids.append(match.id)
                 index = match.end
             } else {
-                let scalar = normalized[index]
-                ids.append(tokenToID[String(scalar)] ?? metadata.unknownTokenID)
+                let character = normalized[index]
+                let fallbackIDs = String(character).utf8.map { byteTokenIDs[$0] ?? metadata.unknownTokenID }
+                ids.append(contentsOf: fallbackIDs)
                 index = normalized.index(after: index)
             }
         }
