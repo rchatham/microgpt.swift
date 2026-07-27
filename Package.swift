@@ -11,6 +11,7 @@ let package = Package(
         .executable(name: "translategemma-swift", targets: ["translategemma-swift"]),
         .executable(name: "gguf-inspect", targets: ["gguf-inspect"]),
         .executable(name: "translategemma-native-tokenize", targets: ["translategemma-native-tokenize"]),
+        .library(name: "GGUFCore", targets: ["GGUFCore"]),
     ],
     dependencies: [
         .package(path: "Vendor/LocalLLMClient"),
@@ -29,11 +30,16 @@ let package = Package(
                 .interoperabilityMode(.Cxx)
             ]
         ),
-        .executableTarget(
-            name: "gguf-inspect"
+        .target(
+            name: "GGUFCore"
         ),
         .executableTarget(
-            name: "translategemma-native-tokenize"
+            name: "gguf-inspect",
+            dependencies: ["GGUFCore"]
+        ),
+        .executableTarget(
+            name: "translategemma-native-tokenize",
+            dependencies: ["GGUFCore"]
         ),
     ]
 )
