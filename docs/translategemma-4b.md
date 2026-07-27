@@ -71,6 +71,35 @@ echo "Good morning, how are you?" | TARGET=Japanese .build/release/translategemm
 
 The Ollama and shell scripts below are only smoke-test/prototyping helpers; they are not the intended final architecture.
 
+## Inspect GGUF files in native Swift
+
+The `gguf-inspect` executable is native Swift groundwork for reading GGUF metadata and tensor directories without llama.cpp:
+
+```bash
+swift run gguf-inspect models/translategemma-4b-it-Q4_K_M.gguf
+swift run gguf-inspect models/translategemma-4b-it-Q4_K_M.gguf --tensor output_norm.weight --values 8
+swift run gguf-inspect models/translategemma-4b-it-Q4_K_M.gguf --tensor token_embd.weight
+```
+
+It can decode F32/F16 tensor prefixes and reports byte sizes for common GGML quantized tensor types. Quantized value decoding and matmul are future runtime work.
+
+## Prototype native tokenizer
+
+The `translategemma-native-tokenize` executable reads tokenizer metadata from GGUF and performs prototype tokenization:
+
+```bash
+swift run translategemma-native-tokenize models/translategemma-4b-it-Q4_K_M.gguf "Hello world"
+./scripts/verify-native-tokenizer.sh
+```
+
+Expected smoke-test IDs for `Hello world` with the downloaded model:
+
+```text
+ids: 2 9259 1902
+```
+
+Limitations: this is currently a greedy longest-match tokenizer with UTF-8 byte fallback. It is not yet a full SentencePiece unigram/Viterbi implementation, so IDs may diverge from reference tokenizers for some inputs.
+
 ## Run with Ollama if you already have the model
 
 If `ollama list` shows `translategemma:latest`, no GGUF download is needed:
