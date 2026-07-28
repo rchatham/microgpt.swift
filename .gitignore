@@ -9,3 +9,6 @@ DerivedData/
 /input.txt
 /model*.json
 /test-model.json
+/models/
+*.gguf
+/Vendor/LocalLLMClient/

@@ -5,11 +5,45 @@ import PackageDescription
 
 let package = Package(
     name: "microgpt.swift",
+    platforms: [.macOS(.v14)],
+    products: [
+        .executable(name: "microgpt.swift", targets: ["microgpt.swift"]),
+        .executable(name: "translategemma-swift", targets: ["translategemma-swift"]),
+        .executable(name: "gguf-inspect", targets: ["gguf-inspect"]),
+        .executable(name: "translategemma-native-tokenize", targets: ["translategemma-native-tokenize"]),
+        .library(name: "GGUFCore", targets: ["GGUFCore"]),
+    ],
+    dependencies: [
+        .package(path: "Vendor/LocalLLMClient"),
+    ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .executableTarget(
             name: "microgpt.swift"
+        ),
+        .executableTarget(
+            name: "translategemma-swift",
+            dependencies: [
+                .product(name: "LocalLLMClient", package: "LocalLLMClient"),
+                .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
+            ],
+            swiftSettings: [
+                .interoperabilityMode(.Cxx)
+            ]
+        ),
+        .target(
+            name: "GGUFCore"
+        ),
+        .executableTarget(
+            name: "gguf-inspect",
+            dependencies: ["GGUFCore"]
+        ),
+        .executableTarget(
+            name: "translategemma-native-tokenize",
+            dependencies: ["GGUFCore"]
+        ),
+        .testTarget(
+            name: "GGUFCoreTests",
+            dependencies: ["GGUFCore"]
         ),
     ]
 )
