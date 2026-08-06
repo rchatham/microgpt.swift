@@ -44,11 +44,24 @@ struct GGUFTokenizerMetadata {
     }
 }
 
-struct GreedySentencePieceTokenizer {
+struct SentencePieceUnigramTokenizer {
+    private struct Match {
+        let ids: [Int]
+        let length: Int
+        let score: Float
+    }
+
+    private struct Backpointer {
+        let previous: Int
+        let ids: [Int]
+    }
+
     let metadata: GGUFTokenizerMetadata
     let tokenToID: [String: Int]
     let byteTokenIDs: [UInt8: Int]
+    let tokenScores: [Float]
     let maxTokenLength: Int
+    let unknownScore: Float
 
     init(metadata: GGUFTokenizerMetadata) throws {
         guard metadata.model == "llama" else { throw TokenizerError.unsupportedTokenizer(metadata.model) }
@@ -60,42 +73,33 @@ struct GreedySentencePieceTokenizer {
         self.byteTokenIDs = (UInt8.min...UInt8.max).reduce(into: [:]) { result, byte in
             result[byte] = tokenToID[String(format: "<0x%02X>", byte)]
         }
+        self.tokenScores = metadata.tokens.indices.map { index in
+            metadata.scores.indices.contains(index) ? metadata.scores[index] : 0
+        }
         self.maxTokenLength = metadata.tokens.map(\.count).max() ?? 0
+        self.unknownScore = (metadata.scores.min() ?? -10) - 10
     }
 
     func encode(_ text: String) -> [Int] {
-        var normalized = text.replacingOccurrences(of: " ", with: "▁")
-        if metadata.addSpacePrefix, !normalized.hasPrefix("▁") {
-            normalized = "▁" + normalized
-        }
+        let normalized = normalize(text)
+        let characters = Array(normalized)
+        var bestScores = Array(repeating: -Float.infinity, count: characters.count + 1)
+        var backpointers = Array<Backpointer?>(repeating: nil, count: characters.count + 1)
+        bestScores[0] = 0
 
-        var ids: [Int] = []
-        if metadata.addBOS { ids.append(metadata.bosTokenID) }
-
-        var index = normalized.startIndex
-        while index < normalized.endIndex {
-            let remaining = normalized[index...]
-            var match: (id: Int, end: String.Index)?
-            var end = normalized.index(index, offsetBy: min(maxTokenLength, remaining.count), limitedBy: normalized.endIndex) ?? normalized.endIndex
-            while end > index {
-                let piece = String(normalized[index..<end])
-                if let id = tokenToID[piece] {
-                    match = (id, end)
-                    break
+        for start in 0..<characters.count where bestScores[start].isFinite {
+            for match in matches(in: characters, at: start) {
+                let end = start + match.length
+                let score = bestScores[start] + match.score
+                if score > bestScores[end] {
+                    bestScores[end] = score
+                    backpointers[end] = Backpointer(previous: start, ids: match.ids)
                 }
-                end = normalized.index(before: end)
-            }
-            if let match {
-                ids.append(match.id)
-                index = match.end
-            } else {
-                let character = normalized[index]
-                let fallbackIDs = String(character).utf8.map { byteTokenIDs[$0] ?? metadata.unknownTokenID }
-                ids.append(contentsOf: fallbackIDs)
-                index = normalized.index(after: index)
             }
         }
 
+        var ids = backtrack(backpointers: backpointers, end: characters.count)
+        if metadata.addBOS { ids.insert(metadata.bosTokenID, at: 0) }
         if metadata.addEOS { ids.append(metadata.eosTokenID) }
         return ids
     }
@@ -105,6 +109,42 @@ struct GreedySentencePieceTokenizer {
             guard metadata.tokens.indices.contains(id) else { return "<invalid>" }
             return metadata.tokens[id]
         }
+    }
+
+    private func normalize(_ text: String) -> String {
+        var normalized = text.replacingOccurrences(of: " ", with: "▁")
+        if metadata.addSpacePrefix, !normalized.hasPrefix("▁") {
+            normalized = "▁" + normalized
+        }
+        return normalized
+    }
+
+    private func matches(in characters: [Character], at start: Int) -> [Match] {
+        var matches: [Match] = []
+        let maxEnd = min(characters.count, start + maxTokenLength)
+        if start < maxEnd {
+            for end in (start + 1)...maxEnd {
+                let piece = String(characters[start..<end])
+                if let id = tokenToID[piece] {
+                    matches.append(Match(ids: [id], length: end - start, score: tokenScores[id]))
+                }
+            }
+        }
+        if matches.isEmpty {
+            let fallbackIDs = String(characters[start]).utf8.map { byteTokenIDs[$0] ?? metadata.unknownTokenID }
+            matches = [Match(ids: fallbackIDs, length: 1, score: unknownScore)]
+        }
+        return matches
+    }
+
+    private func backtrack(backpointers: [Backpointer?], end: Int) -> [Int] {
+        var ids: [Int] = []
+        var index = end
+        while index > 0, let backpointer = backpointers[index] {
+            ids.append(contentsOf: backpointer.ids.reversed())
+            index = backpointer.previous
+        }
+        return ids.reversed()
     }
 }
 
@@ -147,7 +187,7 @@ func main() throws {
     let text = args.dropFirst().joined(separator: " ")
     let file = try GGUFReader().read(path: path)
     let metadata = try GGUFTokenizerMetadata(file: file)
-    let tokenizer = try GreedySentencePieceTokenizer(metadata: metadata)
+    let tokenizer = try SentencePieceUnigramTokenizer(metadata: metadata)
     let ids = tokenizer.encode(text)
     let pieces = tokenizer.pieces(for: ids)
 

@@ -95,10 +95,10 @@ swift run translategemma-native-tokenize models/translategemma-4b-it-Q4_K_M.gguf
 Expected smoke-test IDs for `Hello world` with the downloaded model:
 
 ```text
-ids: 2 9259 1902
+ids: 2 9259 515 504 671
 ```
 
-Limitations: this is currently a greedy longest-match tokenizer with UTF-8 byte fallback. It is not yet a full SentencePiece unigram/Viterbi implementation, so IDs may diverge from reference tokenizers for some inputs.
+The tokenizer now uses a score-based unigram/Viterbi pass over GGUF token scores with UTF-8 byte fallback. It is still a prototype and may diverge from reference tokenizers until normalization and special-token handling are fully validated.
 
 ## Run with Ollama if you already have the model
 
