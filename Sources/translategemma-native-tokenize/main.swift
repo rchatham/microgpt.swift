@@ -46,14 +46,14 @@ struct GGUFTokenizerMetadata {
 
 struct SentencePieceUnigramTokenizer {
     private struct Match {
-        let id: Int
+        let ids: [Int]
         let length: Int
         let score: Float
     }
 
     private struct Backpointer {
         let previous: Int
-        let id: Int
+        let ids: [Int]
     }
 
     let metadata: GGUFTokenizerMetadata
@@ -93,7 +93,7 @@ struct SentencePieceUnigramTokenizer {
                 let score = bestScores[start] + match.score
                 if score > bestScores[end] {
                     bestScores[end] = score
-                    backpointers[end] = Backpointer(previous: start, id: match.id)
+                    backpointers[end] = Backpointer(previous: start, ids: match.ids)
                 }
             }
         }
@@ -126,13 +126,13 @@ struct SentencePieceUnigramTokenizer {
             for end in (start + 1)...maxEnd {
                 let piece = String(characters[start..<end])
                 if let id = tokenToID[piece] {
-                    matches.append(Match(id: id, length: end - start, score: tokenScores[id]))
+                    matches.append(Match(ids: [id], length: end - start, score: tokenScores[id]))
                 }
             }
         }
         if matches.isEmpty {
             let fallbackIDs = String(characters[start]).utf8.map { byteTokenIDs[$0] ?? metadata.unknownTokenID }
-            matches = fallbackIDs.map { Match(id: $0, length: 1, score: unknownScore) }
+            matches = [Match(ids: fallbackIDs, length: 1, score: unknownScore)]
         }
         return matches
     }
@@ -141,7 +141,7 @@ struct SentencePieceUnigramTokenizer {
         var ids: [Int] = []
         var index = end
         while index > 0, let backpointer = backpointers[index] {
-            ids.append(backpointer.id)
+            ids.append(contentsOf: backpointer.ids.reversed())
             index = backpointer.previous
         }
         return ids.reversed()
