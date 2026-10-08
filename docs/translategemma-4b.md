@@ -95,10 +95,19 @@ swift run translategemma-native-tokenize models/translategemma-4b-it-Q4_K_M.gguf
 Expected smoke-test IDs for `Hello world` with the downloaded model:
 
 ```text
-ids: 2 9259 515 504 671
+ids: 2 9259 1902
 ```
 
-The tokenizer now uses a score-based unigram/Viterbi pass over GGUF token scores with UTF-8 byte fallback. It is still a prototype and may diverge from reference tokenizers until normalization and special-token handling are fully validated.
+The tokenizer supports GGUF `tokenizer.ggml.model = "llama"` using SentencePiece score-priority adjacent merges, not additive unigram/Viterbi decoding. It starts with Unicode codepoints, repeatedly merges the highest-scored vocabulary pair (leftmost on ties), and emits unmatched symbols through UTF-8 byte fallback in byte order. Missing byte tokens fall back to the unknown ID. Scores must be a float32 array with one finite value per vocabulary entry; missing, mismatched, or non-finite scores are rejected instead of silently changing or dropping input.
+
+IDs are conversion-specific. The default `2 9259 1902` smoke baseline above is restored from the pre-unigram implementation; the downloaded conversion was not available for an independent reference recheck. The locally available Ollama conversion was compared against llama.cpp using the same vocabulary and yields `2 26352 1902` for `Hello world`. Override the expected IDs only with values obtained from a reference tokenizer for your exact GGUF:
+
+```bash
+MODEL=models/translategemma-ollama.gguf EXPECTED_IDS="2 26352 1902" ./scripts/verify-native-tokenizer.sh
+swift test --filter NativeTokenizerTests
+```
+
+Model-independent tests cover merge priorities, tie-breaking, stale candidates, exact UTF-8 matching, multi-byte fallback, BOS/EOS flags, and invalid scores. This remains a prototype: existing space-prefix normalization and special-token handling are unchanged and still need broader reference validation before relying on it for final model execution.
 
 ## Run with Ollama if you already have the model
 

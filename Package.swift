@@ -45,5 +45,9 @@ let package = Package(
             name: "GGUFCoreTests",
             dependencies: ["GGUFCore"]
         ),
+        .testTarget(
+            name: "NativeTokenizerTests",
+            dependencies: ["GGUFCore", "translategemma-native-tokenize"]
+        ),
     ]
 )

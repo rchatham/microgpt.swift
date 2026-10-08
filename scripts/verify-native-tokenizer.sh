@@ -3,7 +3,8 @@ set -euo pipefail
 
 MODEL=${MODEL:-models/translategemma-4b-it-Q4_K_M.gguf}
 TEXT=${1:-Hello world}
-EXPECTED_IDS=${EXPECTED_IDS:-"2 9259 515 504 671"}
+# Conversion-specific pre-unigram baseline; use reference IDs for a different GGUF or text.
+EXPECTED_IDS=${EXPECTED_IDS:-"2 9259 1902"}
 
 output=$(swift run translategemma-native-tokenize "$MODEL" "$TEXT")
 printf '%s\n' "$output"
