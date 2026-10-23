@@ -25,6 +25,8 @@ Download [mlx-community/translategemma-4b-it-4bit](https://huggingface.co/mlx-co
 
 Language codes come from the model's own `chat_template.jinja` (`en`, `pt-BR`, `zh-Hant`, …). Text can also come on stdin.
 
+Decoding is greedy by default, which is usually best for translation. `--sample` switches to top-k/top-p sampling with TranslateGemma's suggested k = 64 and p = 0.95, which gives varied phrasings with the same meaning. `gemma-check --sampling` tests the sampler on a toy vocabulary, against a plain-Swift reference, without loading the model.
+
 ## Check against the reference
 
 `gemma-check` runs MicroGemma and `mlx-swift-lm`'s `Gemma3TextModel` on the same tokens and diffs their logits. It also compares the KV cache against a full forward pass beyond the 1024-token sliding window. `mlx-swift-lm` is only a dependency of this tool.

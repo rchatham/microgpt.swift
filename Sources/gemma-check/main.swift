@@ -6,9 +6,10 @@ import MicroGemma
 
 // Dev tool: runs MicroGemma and mlx-swift-lm's Gemma3TextModel on identical token IDs and
 // reports how far apart their logits are. Also checks MicroGemma's KV cache against a plain
-// full-sequence forward pass, including past the sliding window.
+// full-sequence forward pass, including past the sliding window, and checks top-k/top-p
+// sampling on a toy vocabulary.
 //
-// Usage: gemma-check [--model DIR]
+// Usage: gemma-check [--model DIR] [--sampling | --bench]
 
 var arguments = Array(CommandLine.arguments.dropFirst())
 let modelPath: String = {
@@ -72,6 +73,11 @@ func referenceGreedy(_ model: MLXLLM.Gemma3TextModel, _ prompt: [Int], stop: Set
     }
     return out
 }
+
+// Sampling checks need no model, so they run first; `--sampling` runs only them.
+guard runSamplingChecks() else { exit(1) }
+if arguments.contains("--sampling") { exit(0) }
+print()
 
 print("loading MicroGemma from \(directory.path)")
 let translator = try await Translator.load(from: directory)
