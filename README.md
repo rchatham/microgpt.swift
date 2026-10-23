@@ -34,4 +34,6 @@ xcodebuild build -scheme gemma-check -destination 'platform=macOS' -configuratio
 .build/xcode/Build/Products/Release/gemma-check
 ```
 
+`gemma-check --bench` times greedy generation (256 tokens, short and 1275-token prompts) for both implementations. It alternates which one goes first, reports the median of paired MicroGemma/mlx-swift-lm decode ratios, and splits a MicroGemma decode step into CPU graph-building time and GPU wait. Decoding is pipelined (step n+1 is queued with `asyncEval` before token n is read), and the KV cache writes into preallocated buffers; sliding layers use a 1024-slot ring.
+
 TranslateGemma's config gives its ×8 linear RoPE factor only under the newer `rope_parameters` key. `mlx-swift-lm` 3.31.4 reads only the legacy `rope_scaling` key, so as shipped it drops the factor on the global-attention layers. MicroGemma reads both keys. With the factor injected into the reference, the two implementations' logits are identical.

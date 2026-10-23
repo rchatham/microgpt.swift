@@ -32,36 +32,19 @@ public final class Translator {
         return bos + tokenizer.encode(text: rendered, addSpecialTokens: false)
     }
 
-    public struct Stats: Sendable {
-        public var promptTokens = 0
-        public var generatedTokens = 0
-        public var prefillSeconds = 0.0
-        public var decodeSeconds = 0.0
-    }
-
     /// Translates `text`, calling `onText` with each newly decoded piece as it is generated.
     @discardableResult
     public func translate(
         _ text: String, from source: String, to target: String,
         maxTokens: Int = 512, sampling: Sampling = .greedy,
         onText: (String) -> Void = { _ in }
-    ) throws -> (text: String, stats: Stats) {
+    ) throws -> (text: String, stats: GenerationStats) {
         let tokens = try promptTokens(text: text, source: source, target: target)
-        var stats = Stats(promptTokens: tokens.count)
-        let caches = model.makeCaches()
-
-        var clock = Date()
-        var logits = model(MLXArray(tokens.map(Int32.init))[.newAxis], caches: caches)
         var generated: [Int] = []
         var emitted = ""
 
-        for step in 0..<maxTokens {
-            let next = sampling.chooseToken(from: logits[0, -1])
-            if step == 0 {
-                stats.prefillSeconds = Date().timeIntervalSince(clock)
-                clock = Date()
-            }
-            if stopTokens.contains(next) { break }
+        let stats = model.generate(prompt: tokens, maxTokens: maxTokens, sampling: sampling) { next in
+            if stopTokens.contains(next) { return false }
             generated.append(next)
 
             // Re-decode the whole reply so multi-token characters come out whole; hold back
@@ -71,14 +54,8 @@ public final class Translator {
                 onText(String(decoded.dropFirst(emitted.count)))
                 emitted = decoded
             }
-
-            logits = model(MLXArray([Int32(next)])[.newAxis], caches: caches)
-            // Compute this step now (MLX is lazy) so the graph doesn't grow across steps.
-            eval([logits] + caches.flatMap(\.state))
+            return true
         }
-
-        stats.generatedTokens = generated.count
-        stats.decodeSeconds = Date().timeIntervalSince(clock)
         return (tokenizer.decode(tokens: generated, skipSpecialTokens: true), stats)
     }
 }

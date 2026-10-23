@@ -81,6 +81,23 @@ print("loading reference as shipped, and with rope_scaling injected")
 let refShipped = try loadReference(forceLinearRope: false)
 let refScaled = try loadReference(forceLinearRope: true)
 
+if arguments.contains("--bench") {
+    let short = try translator.promptTokens(
+        text: "Could you tell me where the nearest train station is? I think I'm lost, and my "
+            + "phone battery died an hour ago, so I can't look it up myself.",
+        source: "en", target: "de")
+    let long = try translator.promptTokens(
+        text: String(
+            repeating: "Machine translation has improved dramatically over the past decade, "
+                + "moving from phrase tables to neural networks that read whole sentences at once. ",
+            count: 50),
+        source: "en", target: "fr")
+    try runBenchmark(
+        ours: ours, reference: refScaled, tokenizer: translator.tokenizer, prompts: [("short", short), ("long", long)],
+        count: 256, runs: 9)
+    exit(0)
+}
+
 let stop = Set([translator.tokenizer.convertTokenToId("<end_of_turn>"), translator.tokenizer.eosTokenId].compactMap { $0 })
 let cases: [(String, String, String)] = [
     ("en", "es", "The quick brown fox jumps over the lazy dog."),
@@ -143,5 +160,18 @@ let window = ours.config.slidingWindow
 print("\nlong prompt: \(longTokens.count) tokens (sliding window \(window)), steps from \(window + 50)")
 print("  MicroGemma cached vs full: \(cacheCheck(longTokens, split: window + 50, oursForward))")
 print("  reference cached vs full:  \(cacheCheck(longTokens, split: window + 50, referenceForward))")
+print("  MicroGemma steps wrapping the ring (from 1000): \(cacheCheck(longTokens, split: 1000, oursForward))")
+
+// Prefill in 300-token chunks: later chunks rewrite a ring that has already wrapped.
+let chunkForward = oursForward()
+let chunked = stride(from: 0, to: longTokens.count, by: 300).map { start in
+    let chunk = longTokens[start ..< min(start + 300, longTokens.count)]
+    let logits = chunkForward(MLXArray(chunk.map(Int32.init))[.newAxis])
+    eval(logits)  // MLX evaluation of this chunk
+    return logits
+}
+let fullPass = oursForward()(MLXArray(longTokens.map(Int32.init))[.newAxis])
+print("  MicroGemma 300-token chunked prefill vs full:   \(Diff(concatenated(chunked, axis: 1), fullPass))")
+
 let longInput = MLXArray(longTokens.map(Int32.init))[.newAxis]
 print("  MicroGemma vs reference + rope scale (full pass): \(Diff(ours(longInput, caches: ours.makeCaches()), refScaled(longInput, cache: nil)))")

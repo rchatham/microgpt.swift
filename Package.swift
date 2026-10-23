@@ -37,6 +37,7 @@ let package = Package(
             name: "gemma-check",
             dependencies: [
                 "MicroGemma",
+                .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
             ]

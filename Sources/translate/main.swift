@@ -43,7 +43,7 @@ do {
 }
 let loadSeconds = Date().timeIntervalSince(loadStart)
 
-let stats: Translator.Stats
+let stats: GenerationStats
 do {
     stats = try translator.translate(
         text, from: source, to: target, maxTokens: maxTokens, sampling: sampling
@@ -59,6 +59,6 @@ fflush(stdout)
 
 let note = String(
     format: "load %.1fs | prompt %d tok, prefill %.0f tok/s | %d tok, %.1f tok/s",
-    loadSeconds, stats.promptTokens, Double(stats.promptTokens) / stats.prefillSeconds,
-    stats.generatedTokens, Double(stats.generatedTokens) / stats.decodeSeconds)
+    loadSeconds, stats.promptTokens, stats.prefillTokensPerSecond,
+    stats.generatedTokens, stats.decodeTokensPerSecond)
 FileHandle.standardError.write(Data((note + "\n").utf8))
