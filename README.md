@@ -7,7 +7,7 @@ Two ends of the same idea in Swift:
 
 ## Build
 
-MLX's Metal shaders only compile under `xcodebuild` (not `swift build`). The package pins `mlx-swift` 0.31.x because newer releases need Swift tools 6.3.
+MLX's Metal shaders only compile under `xcodebuild` (not `swift build`). It needs Swift 6.3 or later (Xcode 27); it was built with `mlx-swift` 0.32.3 and `mlx-swift-lm` 3.32.3.
 
 ```bash
 xcodebuild build -scheme translate -destination 'platform=macOS' -configuration Release -derivedDataPath .build/xcode -skipMacroValidation
@@ -38,4 +38,4 @@ xcodebuild build -scheme gemma-check -destination 'platform=macOS' -configuratio
 
 `gemma-check --bench` times greedy generation (256 tokens, short and 1275-token prompts) for both implementations. It alternates which one goes first, reports the median of paired MicroGemma/mlx-swift-lm decode ratios, and splits a MicroGemma decode step into CPU graph-building time and GPU wait. Decoding is pipelined (step n+1 is queued with `asyncEval` before token n is read), and the KV cache writes into preallocated buffers; sliding layers use a 1024-slot ring.
 
-TranslateGemma's config gives its ×8 linear RoPE factor only under the newer `rope_parameters` key. `mlx-swift-lm` 3.31.4 reads only the legacy `rope_scaling` key, so as shipped it drops the factor on the global-attention layers. MicroGemma reads both keys. With the factor injected into the reference, the two implementations' logits are identical.
+TranslateGemma's config gives its ×8 linear RoPE factor only under the newer `rope_parameters` key. `mlx-swift-lm` 3.32.3 and earlier read only the legacy `rope_scaling` key, so as shipped they drop the factor on the global-attention layers. MicroGemma reads both keys. With the factor injected into the reference, the two implementations' logits are identical. The upstream fix, [ml-explore/mlx-swift-lm#723](https://github.com/ml-explore/mlx-swift-lm/pull/723), is merged but not yet in a release; once it is, the "as shipped" and "+ rope scale" rows in `gemma-check` should match.

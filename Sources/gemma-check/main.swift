@@ -146,7 +146,8 @@ let oursForward = { () -> (MLXArray) -> MLXArray in
     return { ours($0, caches: caches) }
 }
 let referenceForward = { () -> (MLXArray) -> MLXArray in
-    let cache = refScaled.newCache(parameters: nil)
+    // Throws only for KV-cache settings we don't pass; a failure here should stop the tool.
+    let cache = try! refScaled.newCache(parameters: nil)
     return { refScaled($0, cache: cache) }
 }
 

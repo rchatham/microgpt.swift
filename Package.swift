@@ -7,11 +7,11 @@ let package = Package(
     name: "microgpt.swift",
     platforms: [.macOS(.v14)],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.31.4")),
+        .package(url: "https://github.com/ml-explore/mlx-swift", .upToNextMinor(from: "0.32.3")),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.5"),
         // Reference implementation, used only by the `gemma-check` dev tool to diff logits.
         // Nothing in MicroGemma or `translate` may depend on it.
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "3.31.4")),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", .upToNextMinor(from: "3.32.3")),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
